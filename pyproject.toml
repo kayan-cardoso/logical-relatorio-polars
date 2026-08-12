@@ -1,0 +1,17 @@
+[project]
+name = "automatizacoes"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastexcel>=0.20.2",
+    "ipykernel>=7.3.0",
+    "jupyter>=1.1.1",
+    "pandas>=3.0.5",
+    "polars>=1.43.1",
+    "pya>=0.5.2",
+    "pyarrow>=25.0.0",
+    "unidecode>=1.4.0",
+    "xlsxwriter>=3.2.9",
+]
