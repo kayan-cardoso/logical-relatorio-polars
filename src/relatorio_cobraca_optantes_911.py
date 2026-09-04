@@ -1,14 +1,16 @@
-import polars as pl 
+from datetime import date
 from pathlib import Path
+
+import polars as pl
 from unidecode import unidecode
 
-BASE_DIR = Path.cwd() / 'analitico_copart_911_optante' / 'data_input' 
-OUT_DIR = Path.cwd() / 'analitico_copart_911_optante' / 'data_output' 
+BASE_DIR = Path.cwd()  / 'data_input' / 'pc_optantes' / '07'
+OUT_DIR = Path.cwd()  / 'data_output' 
 
-optantes = pl.read_excel(f'{BASE_DIR}/OPTANTES_CRU.xlsx', sheet_name='Export') 
-base_ativos = pl.read_excel(f'{BASE_DIR}/BASE_ATIVOS_CANCELADOS_CRU.xlsx')
-remuneracao = pl.read_excel(f'{BASE_DIR}/REMUNERACAO_CRU.xlsx')
-dados_copart = pl.read_excel(f'{BASE_DIR}/ANALITICO_COPARTICIPACAO_SIGRH.xlsx')
+optantes = pl.read_excel(f'{BASE_DIR}/OPTANTES.xlsx', sheet_name='Export') 
+base_ativos = pl.read_excel(f'{BASE_DIR}/BASE_ATIVOS_E_CANCELADOS.xlsx')
+remuneracao = pl.read_excel(f'{BASE_DIR}/REMUNERACAO.xlsx')
+dados_copart = pl.read_excel(f'{BASE_DIR}/COPARTICIPACAO_BOLETO.xlsx', sheet_name='titular_sem_vinculo')
 
 def formata_coluna(cols:list) -> list:
     cols_norm = []
@@ -34,10 +36,10 @@ remuneracao = remuneracao.with_columns([
 ])
 
 dados_gerais_optantes = (optantes.join(
-    base_ativos[['cpf_titular', 'cpf_segurado', 'nome_segurado', 'codigo_da_empresa', 'matricula_titular_8_digitos', 'idade']], 
+    base_ativos[['cpf_titular', 'cpf_segurado', 'nome_segurado', 'tipo_segurado' , 'codigo_da_empresa', 'matricula_titular_8_digitos', 'idade']], 
     on=['cpf_titular', 'cpf_segurado'], 
     how='inner')
-    .drop(['nome_segurado_right', 'cpf_sem_ponto'])
+    .drop(['nome_segurado_right'])
     .sort(by='cpf_segurado')
     .rename({'matricula_titular_8_digitos':'matricula'})
     .with_columns([pl.col('codigo_da_empresa').cast(pl.Int64)])
@@ -47,7 +49,7 @@ dados_gerais_optantes = (optantes.join(
 #Adicionando rubrica e valor relacionado
 #=====================
 dados_gerais_optantes = dados_gerais_optantes.with_columns([
-    pl.when(pl.col('tipo_beneficiario') == 'TITULAR').then(pl.lit('41134'))
+    pl.when(pl.col('tipo_segurado') == 'TITULAR').then(pl.lit('41134'))
     .when(pl.col('idade') <= 18).then(pl.lit('41135'))
     .when(pl.col('idade') <= 23).then(pl.lit('41171'))
     .when(pl.col('idade') <= 28).then(pl.lit('41175'))
@@ -76,17 +78,17 @@ dados_gerais_optantes = dados_gerais_optantes.with_columns([
     .otherwise(pl.col('mensalidade') * 2).alias('mensalidade')
 ])
 
-group1 = dados_gerais_optantes.group_by(['cpf_titular', 'tipo_beneficiario', 'codigo_da_empresa', 'matricula', 'situacao_funcional']).agg(
+group1 = dados_gerais_optantes.group_by(['cpf_titular', 'tipo_segurado', 'codigo_da_empresa', 'matricula', 'situacao_funcional']).agg(
     pl.col('mensalidade').sum()
 )
 
 #=====================
-#Pivotando a tabale para que os valores da coluna tipo_beneficiario virem colunas com os valores da coluna mensalidade.
+#Pivotando a tabale para que os valores da coluna tipo_segurado virem colunas com os valores da coluna mensalidade.
 #=====================
 pivot = group1.pivot(
     values='mensalidade',
     index=['cpf_titular', 'codigo_da_empresa', 'matricula', 'situacao_funcional'],
-    on='tipo_beneficiario'
+    on='tipo_segurado'
 ).fill_null(0)
 
 #====================
@@ -121,7 +123,6 @@ dados_copart = dados_copart.with_columns([
     pl.col('emp_cod').cast(pl.Int64)
 ]).filter(pl.col('total_cobranca') > 10).drop('total_cobranca')
 
-
 #===================
 #Resultado final
 #===================
@@ -145,4 +146,10 @@ excel_maida = excel_maida.with_columns([
     (pl.col('mensalidade_titular') + pl.col('mensalidade_dependente') + pl.col('cobranca_copart_titular') + pl.col('cobranca_copart_dependente')).alias('Total_cobranca')
 ])
 
-excel_maida.write_excel(f'{OUT_DIR}/relatorio_cobranca.xlsx')
+execoes = excel_maida.filter((pl.col('situacao_funcional') == '-') & (pl.col('empresa') != 911))
+
+excel_maida = excel_maida.filter(~((pl.col('situacao_funcional') == '-') & (pl.col('empresa') != 911)))
+
+
+execoes.write_parquet(f'{OUT_DIR}/execoes_boletos{date.today().isoformat()}.parquet')  # noqa: DTZ011
+excel_maida.write_excel(f'{OUT_DIR}/relatorio_cobranca_pc_optantes{date.today().isoformat()}.xlsx', float_precision=2)  # noqa: DTZ011

@@ -8,5 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
-data_input/
+# data_input/
+aud/
+auditoria.ipynb
 
+  

@@ -1,15 +1,18 @@
-import polars as pl
-from pathlib import Path
-from unidecode import unidecode
-from datetime import date
 import calendar
-BASE_DIR = Path.cwd().parent / 'data_input' / 'nao_consignados'
+from datetime import date
+from pathlib import Path
 
-retorno = pl.read_excel(f'{BASE_DIR}/07/ORGAOS e CONSIGNACOES 07.2026.xlsx')
-base_ativos = pl.read_excel(f'{BASE_DIR}/07/BASE ATIVOS E CANCELADOS 06.2026.xlsx')
-coopart = pl.read_excel(f'{BASE_DIR}/07/ANALITICO COPARTICIPAÇÃO SIGRH - 07.2026 (consignado).xlsx')
-remuneracao = pl.read_excel(f'{BASE_DIR}/07/REMUNERAÇÃO 06.2026.xlsx')
-obitos = pl.read_excel(f'{BASE_DIR}/07/Óbito_07_2026.xlsx')
+import polars as pl
+from unidecode import unidecode
+
+BASE_DIR = Path.cwd() / 'data_input' / 'nao_consignados'
+OUT_DIR = Path.cwd() / 'data_output'
+
+retorno = pl.read_excel(f'{BASE_DIR}/08/RETORNO TODOS_08.xlsx')
+base_ativos = pl.read_excel(f'{BASE_DIR}/08/BASE ATIVOS E CANCELADOS 07.2026.xlsx', sheet_name='ativos_cancelados')
+coopart = pl.read_excel(f'{BASE_DIR}/08/PLANILHA COBRANÇA CONSIGNADO.xlsx')
+remuneracao = pl.read_excel(f'{BASE_DIR}/08/REMUNERAÇÃO 07.2026.xlsx')
+obitos = pl.read_excel(f'{BASE_DIR}/08/VERIFICAR VINCULOS.xlsx')
 
 # Função para formatar as colunas de forma correta
 def formata_coluna(cols:list) -> list:
@@ -26,6 +29,11 @@ coopart.columns = formata_coluna(coopart.columns)
 obitos.columns = formata_coluna(obitos.columns)
 
 retorno =  retorno.select(pl.all().exclude(['mesclado', 'qtde_rubricas']))
+retorno = retorno.with_columns([
+    pl.col('cpf').str.slice(-11).alias('cpf')
+]).with_columns([
+    pl.concat_str(['cpf', 'rubrica'], separator='_').alias('chave')
+])
 #=====================================================
 #======= Regra do calculo da mensalidade dos titulares
 #=====================================================
@@ -36,7 +44,7 @@ remuneracao = remuneracao.with_columns([
     pl.when(pl.col('valor_mensalidade') < 578).then(578)
     .when(pl.col('valor_mensalidade') > 1538).then(1538)
     .otherwise('valor_mensalidade').alias('valor_mensalidade')
-]).filter(pl.col('orgao') != '911')
+]).filter(pl.col('cod_org') != '911')
 
 #===================================================
 #======= Regra das rubricas e valor das mensalidades 
@@ -100,7 +108,9 @@ base_ativos = base_ativos.filter(pl.col('data_de_cancelamento').is_null())
 # Regra de calculo da pro rata
 #=============================
 
-mes = date.today().replace(day=1, month=6)
+mes_corrente = date.today().month - 1   # noqa: DTZ011
+
+mes = date.today().replace(day=1, month=mes_corrente)  # noqa: DTZ011
 total_dias = calendar.monthrange(mes.year, mes.month)[1] # Total de dias do mes atual
 
 pro_rata = base_ativos.filter(pl.col('data_adesao') >= mes)
@@ -139,7 +149,6 @@ rubrica_coopart = coopart.unpivot(
 # Lista de obitos 
 #================
 cpf_obitos = (obitos
-    .filter(pl.col('motivo_do_desligamento') == '207')
     .group_by('cpf').agg())
 
 #=========================================
@@ -218,4 +227,9 @@ relatorio_final = relatorio_final.with_columns([
      ).alias('total_cobranca')
 ])
 
+relatorio_final = relatorio_final.filter(pl.col('total_cobranca') > 10)
+
+
 relatorio_final = relatorio_final.join(cpf_obitos, on='cpf', how='anti') # tirando os beneficiarios que foram a obito
+
+relatorio_final.write_excel(f'{OUT_DIR}/relatorio_nao_consignados{date.today().isoformat()}.xlsx')  # noqa: DTZ011
