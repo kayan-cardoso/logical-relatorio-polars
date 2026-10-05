@@ -5,14 +5,14 @@ from pathlib import Path
 import polars as pl
 from unidecode import unidecode
 
-BASE_DIR = Path.cwd() / 'data_input' / 'nao_consignados'
+BASE_DIR = Path.cwd() / 'data_input' / 'nao_consignados' / '08'
 OUT_DIR = Path.cwd() / 'data_output'
 
-retorno = pl.read_excel(f'{BASE_DIR}/08/RETORNO TODOS_08.xlsx')
-base_ativos = pl.read_excel(f'{BASE_DIR}/08/BASE ATIVOS E CANCELADOS 07.2026.xlsx', sheet_name='ativos_cancelados')
-coopart = pl.read_excel(f'{BASE_DIR}/08/PLANILHA COBRANÇA CONSIGNADO.xlsx')
-remuneracao = pl.read_excel(f'{BASE_DIR}/08/REMUNERAÇÃO 07.2026.xlsx')
-obitos = pl.read_excel(f'{BASE_DIR}/08/VERIFICAR VINCULOS.xlsx')
+retorno = pl.read_excel(f'{BASE_DIR}/RETORNO_TODOS_09.xlsx')
+base_ativos = pl.read_excel(f'{BASE_DIR}/BASE_ATIVOS_E_CANCELADOS.xlsx')
+remuneracao = pl.read_excel(f'{BASE_DIR}/REMUNERACAO.xlsx')
+obitos = pl.read_excel(f'{BASE_DIR}/arquivo_pdv.xlsx', sheet_name='OBITOS')
+coopart = pl.read_excel(f'{BASE_DIR}/PLANILHA_COBRANÇA_CONSIGNADO.xlsx')
 
 # Função para formatar as colunas de forma correta
 def formata_coluna(cols:list) -> list:
@@ -44,7 +44,18 @@ remuneracao = remuneracao.with_columns([
     pl.when(pl.col('valor_mensalidade') < 578).then(578)
     .when(pl.col('valor_mensalidade') > 1538).then(1538)
     .otherwise('valor_mensalidade').alias('valor_mensalidade')
-]).filter(pl.col('cod_org') != '911')
+]).filter(pl.col('codigo_eco') != '911')
+
+#=========================================================================
+#======= Dados cadastrais dos titulares (fonte principal: base de ativos)
+#=========================================================================
+cadastro_base = base_ativos.filter(pl.col('tipo_segurado') == 'TITULAR').select([
+    pl.col('cpf_titular').str.replace_all(r'[^\d]', '').alias('cpf'),
+    pl.col('nome_segurado').alias('nome'),
+    pl.col('codigo_da_empresa').alias('orgao'),
+    pl.col('matricula_titular_8_digitos').alias('matricula'),
+    pl.col('situacao_rh').alias('situacao_funcional')
+]).unique(subset='cpf')
 
 #===================================================
 #======= Regra das rubricas e valor das mensalidades 
@@ -133,6 +144,11 @@ coopart = coopart.with_columns([
     pl.col('cpf').str.replace_all(r'[^\d]', '')
 ]).rename({'cobranca_copart_titular':'titular', 'cobranca_copart_dependente':'dependente'})
 
+# Dados cadastrais da copart, usados só quando o titular não está na base de ativos
+cadastro_copart = coopart.select([
+    'cpf', pl.col('nome_titular').alias('nome'), pl.col('emp_cod').alias('orgao'), 'matricula'
+]).unique(subset='cpf')
+
 rubrica_coopart = coopart.unpivot(
     index=['emp_cod', 'matricula', 'cpf'],
     on=['dependente', 'titular'],
@@ -148,8 +164,7 @@ rubrica_coopart = coopart.unpivot(
 #================
 # Lista de obitos 
 #================
-cpf_obitos = (obitos
-    .group_by('cpf').agg())
+cpf_obitos = obitos.select('cpf').unique()
 
 #=========================================
 # Buscando rubricas que não foram cobradas
@@ -229,7 +244,25 @@ relatorio_final = relatorio_final.with_columns([
 
 relatorio_final = relatorio_final.filter(pl.col('total_cobranca') > 10)
 
-
 relatorio_final = relatorio_final.join(cpf_obitos, on='cpf', how='anti') # tirando os beneficiarios que foram a obito
 
-relatorio_final.write_excel(f'{OUT_DIR}/relatorio_nao_consignados{date.today().isoformat()}.xlsx')  # noqa: DTZ011
+# Nome, orgão e matricula: preferência para a base de ativos, copart só quando não tiver na base
+relatorio_final = (relatorio_final
+    .join(cadastro_base, on='cpf', how='left')
+    .join(cadastro_copart, on='cpf', how='left', suffix='_copart')
+    .with_columns([
+        pl.coalesce('nome', 'nome_copart').alias('nome'),
+        pl.coalesce('orgao', 'orgao_copart').alias('orgao'),
+        pl.coalesce('matricula', 'matricula_copart').alias('matricula')
+    ]).drop(['nome_copart', 'orgao_copart', 'matricula_copart'])
+    )
+
+colunas_cadastro = ['cpf', 'nome', 'orgao', 'matricula', 'situacao_funcional']
+relatorio_final = relatorio_final.select(colunas_cadastro + [pl.exclude(colunas_cadastro)])
+
+# Separando o orgão 040 em um arquivo próprio
+eh_040 = (pl.col('orgao') == '040').fill_null(False)
+hoje = date.today().isoformat()  # noqa: DTZ011
+
+relatorio_final.filter(eh_040).write_excel(f'{OUT_DIR}/relatorio_nao_consignados_040_{hoje}.xlsx')
+relatorio_final.filter(~eh_040).write_excel(f'{OUT_DIR}/relatorio_nao_consignados_sem_040_{hoje}.xlsx')

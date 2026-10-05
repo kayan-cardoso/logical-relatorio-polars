@@ -4,10 +4,10 @@ from pathlib import Path
 import polars as pl
 from unidecode import unidecode
 
-BASE_DIR = Path.cwd()  / 'data_input' / 'pc_optantes' / '07'
+BASE_DIR = Path.cwd()  / 'data_input' / 'pc_optantes' / '08'
 OUT_DIR = Path.cwd()  / 'data_output' 
 
-optantes = pl.read_excel(f'{BASE_DIR}/OPTANTES.xlsx', sheet_name='Export') 
+optantes = pl.read_excel(f'{BASE_DIR}/OPTANTES.xlsx') 
 base_ativos = pl.read_excel(f'{BASE_DIR}/BASE_ATIVOS_E_CANCELADOS.xlsx')
 remuneracao = pl.read_excel(f'{BASE_DIR}/REMUNERACAO.xlsx')
 dados_copart = pl.read_excel(f'{BASE_DIR}/COPARTICIPACAO_BOLETO.xlsx', sheet_name='titular_sem_vinculo')
