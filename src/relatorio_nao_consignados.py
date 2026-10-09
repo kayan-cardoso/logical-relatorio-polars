@@ -37,6 +37,8 @@ retorno = retorno.with_columns([
 #=====================================================
 #======= Regra do calculo da mensalidade dos titulares
 #=====================================================
+# Orgão do servidor na remuneração: até 07/2026 a coluna se chamava 'cod_org',
+# a partir da remuneração de 08/2026 ela passou a se chamar 'codigo_eco'
 remuneracao = remuneracao.with_columns([
     ((4 * pl.col('remuneracao_inas')) / 100).round(2).alias('valor_mensalidade'),
     pl.col('cpf').str.replace_all(r'[^\d]', '')
